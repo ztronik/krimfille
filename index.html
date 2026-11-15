@@ -477,13 +477,12 @@
         function getTargetCustomerUrl() {
             const slug = storeConfig.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
             
-            // Jika user mengisi URL publik di pengaturan, gunakan itu.
-            // Jika kosong, otomatis deteksi domain & path saat ini
-            let baseUrl = storeConfig.publicUrl ? storeConfig.publicUrl.trim() : window.location.href.split('#')[0].split('?')[0];
+            // Menggunakan path origin + pathname agar kompatibel mutlak dengan sub-folder GitHub Pages
+            let baseUrl = storeConfig.publicUrl ? storeConfig.publicUrl.trim() : window.location.origin + window.location.pathname;
             
             baseUrl = baseUrl.replace(/\/+$/, '');
-            // Menggunakan Hash (#/?mode=pelanggan) agar aman di GitHub Pages tanpa error 404
-            return `${baseUrl}/#/?toko=${slug}&mode=pelanggan`;
+            // Menggunakan Hash murni agar GitHub Pages tidak pernah mengembalikan 404
+            return `${baseUrl}/#/pelanggan`;
         }
 
         window.generateStoreQR = function() {
@@ -1053,10 +1052,9 @@
         async function initApp() {
             lucide.createIcons();
 
-            // Deteksi parameter Hash URL saat dibuka dari QR HP
-            const hashQuery = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
-            const urlParams = new URLSearchParams(hashQuery);
-            if (urlParams.get('mode') === 'pelanggan' || window.location.hash.includes('mode=pelanggan')) {
+            // Deteksi parameter Hash URL untuk GitHub Pages (Contoh: /#/pelanggan)
+            const currentHash = window.location.hash;
+            if (currentHash.includes('pelanggan') || currentHash.includes('mode=pelanggan')) {
                 switchTab('pelanggan');
             }
 
