@@ -1,0 +1,1119 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KirimFile Toko - Transfer File Pelanggan Instan</title>
+    <!-- Tailwind CSS untuk styling modern dan responsif -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Inter untuk keterbacaan maksimal -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Lucide Icons untuk ikon antarmuka yang bersih -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- QRCode.js untuk generate QR Code permanen toko -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <!-- Tone.js untuk efek suara notifikasi file masuk tanpa file audio eksternal -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+        }
+        /* Animasi halus untuk file baru masuk */
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-slide-in {
+            animation: slideIn 0.3s ease-out forwards;
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 9999px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+        /* Print styling khusus untuk cetak poster QR meja kasir */
+        @media print {
+            body * {
+                visibility: hidden;
+            }
+            #printable-qr-poster, #printable-qr-poster * {
+                visibility: visible;
+            }
+            #printable-qr-poster {
+                position: fixed;
+                left: 0;
+                top: 0;
+                width: 100%;
+                height: 100%;
+                display: flex !important;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                background: white;
+                z-index: 9999;
+            }
+        }
+    </style>
+</head>
+<body class="text-slate-800 antialiased min-h-screen flex flex-col">
+
+    <!-- Navbar Utama -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-30">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <!-- Brand Logo -->
+            <div class="flex items-center gap-2.5">
+                <div class="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-md shadow-blue-600/20">
+                    <i data-lucide="qr-code" class="w-6 h-6"></i>
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span class="font-extrabold text-lg tracking-tight text-slate-900" id="header-store-name">Z-TRONIK PRINT</span>
+                        <span id="connection-status-badge" class="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-700 rounded-full">Menghubungkan...</span>
+                    </div>
+                    <p class="text-xs text-slate-500 hidden sm:block">Transfer file tanpa kabel & tanpa kompresi</p>
+                </div>
+            </div>
+
+            <!-- Mode Switcher (Untuk Simulasi Kasir vs HP Pelanggan) -->
+            <div class="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
+                <button onclick="switchTab('kasir')" id="tab-kasir" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition-all bg-white text-blue-600 shadow-sm">
+                    <i data-lucide="monitor" class="w-4 h-4"></i>
+                    <span>Layar Kasir</span>
+                </button>
+                <button onclick="switchTab('pelanggan')" id="tab-pelanggan" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition-all text-slate-600 hover:text-slate-900">
+                    <i data-lucide="smartphone" class="w-4 h-4"></i>
+                    <span>HP Pelanggan</span>
+                </button>
+            </div>
+
+            <!-- Pengaturan & PIN Toko -->
+            <div class="flex items-center gap-2">
+                <button onclick="togglePinLock()" id="btn-lock-toggle" title="Kunci Layar dengan PIN" class="p-2.5 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors">
+                    <i data-lucide="lock" class="w-5 h-5"></i>
+                </button>
+                <button onclick="openSettingsModal()" title="Pengaturan Toko" class="p-2.5 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors">
+                    <i data-lucide="settings" class="w-5 h-5"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Konten Utama -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        
+        <!-- ==================== VIEW 1: DASHBOARD KASIR / ADMIN ==================== -->
+        <div id="view-kasir" class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            
+            <!-- Kolom Kiri: Kartu QR Code Permanen Toko -->
+            <div class="lg:col-span-4 space-y-6">
+                <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-4 text-white">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-semibold uppercase tracking-wider bg-white/20 px-2.5 py-1 rounded-full">QR Permanen Toko</span>
+                            <span class="text-xs opacity-90" id="store-code-display">KODE: ZTR-88</span>
+                        </div>
+                        <h2 class="text-lg font-bold mt-2">Scan untuk Kirim File</h2>
+                        <p class="text-xs text-blue-100 mt-0.5">Arahkan kamera HP pelanggan ke QR ini</p>
+                    </div>
+                    
+                    <div class="p-6 flex flex-col items-center">
+                        <!-- Container QR Code -->
+                        <div class="p-4 bg-white border-2 border-dashed border-slate-300 rounded-2xl shadow-inner mb-4">
+                            <div id="qrcode-container" class="w-48 h-48 flex items-center justify-center"></div>
+                        </div>
+
+                        <div class="text-center mb-5">
+                            <p class="text-xs text-slate-500">Atau buka tautan langsung di browser HP:</p>
+                            <div class="mt-1.5 flex items-center justify-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200">
+                                <span class="text-xs font-mono font-medium text-slate-700 truncate max-w-[200px]" id="store-url-text">kirimfile.toko/z-tronik</span>
+                                <button onclick="copyStoreLink()" class="text-blue-600 hover:text-blue-800 p-1" title="Salin Link">
+                                    <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                                </button>
+                            </div>
+                            <!-- Peringatan jika masih di mode preview lokal -->
+                            <div id="local-url-warning" class="hidden mt-3 bg-amber-50 border border-amber-200 rounded-xl p-2.5 text-left">
+                                <p class="text-[11px] text-amber-800 leading-relaxed">
+                                    <strong>Info Scan HP:</strong> Saat ini aplikasi berjalan di mode <em>Preview Lokal</em> sehingga belum bisa diakses dari HP luar. Klik <button onclick="openSettingsModal()" class="underline font-bold text-amber-900">Pengaturan</button> untuk memasukkan URL hosting publik toko Anda.
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- Tombol Aksi QR -->
+                        <div class="grid grid-cols-2 gap-3 w-full">
+                            <button onclick="printQrPoster()" class="flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl transition-colors">
+                                <i data-lucide="printer" class="w-4 h-4"></i>
+                                <span>Cetak Poster QR</span>
+                            </button>
+                            <button onclick="switchTab('pelanggan')" class="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold rounded-xl transition-colors">
+                                <i data-lucide="upload-cloud" class="w-4 h-4"></i>
+                                <span>Simulasi Kirim</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Info Keamanan & Auto Delete -->
+                    <div class="bg-slate-50 px-6 py-3.5 border-t border-slate-200 flex items-center justify-between text-xs text-slate-600">
+                        <div class="flex items-center gap-1.5">
+                            <i data-lucide="clock" class="w-4 h-4 text-amber-500"></i>
+                            <span>Auto-hapus: <strong id="retention-label">30 Menit</strong></span>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <i data-lucide="shield-check" class="w-4 h-4 text-emerald-500"></i>
+                            <span>PIN: <strong id="pin-status-label">Aktif</strong></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Statistik Singkat -->
+                <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Ringkasan Antrean</h3>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-blue-50/70 p-3.5 rounded-xl border border-blue-100">
+                            <p class="text-xs text-blue-600 font-medium">File Aktif</p>
+                            <p class="text-2xl font-extrabold text-slate-900 mt-0.5" id="stat-active-files">0</p>
+                        </div>
+                        <div class="bg-emerald-50/70 p-3.5 rounded-xl border border-emerald-100">
+                            <p class="text-xs text-emerald-600 font-medium">Total Ukuran</p>
+                            <p class="text-2xl font-extrabold text-slate-900 mt-0.5" id="stat-total-size">0 MB</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Kolom Kanan: Daftar File Masuk Real-Time -->
+            <div class="lg:col-span-8 flex flex-col">
+                <div class="bg-white rounded-2xl border border-slate-200 shadow-sm flex-1 flex flex-col overflow-hidden">
+                    <!-- Header Inbox -->
+                    <div class="px-6 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                        <div class="flex items-center gap-2.5">
+                            <h2 class="text-base font-bold text-slate-900">File Masuk Pelanggan</h2>
+                            <span id="badge-count" class="px-2.5 py-0.5 text-xs font-bold bg-blue-100 text-blue-700 rounded-full">0</span>
+                        </div>
+                        
+                        <div class="flex items-center gap-2">
+                            <button onclick="addDemoFiles()" class="px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors flex items-center gap-1.5">
+                                <i data-lucide="sparkles" class="w-3.5 h-3.5 text-amber-500"></i>
+                                <span>Tes File Masuk</span>
+                            </button>
+                            <button onclick="clearAllFiles()" class="px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50 rounded-lg transition-colors flex items-center gap-1.5">
+                                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                <span>Bersihkan Semua</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Filter Tipe File -->
+                    <div class="px-6 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-2 overflow-x-auto">
+                        <button onclick="filterFiles('all')" class="filter-btn active px-3 py-1 rounded-lg text-xs font-semibold bg-slate-800 text-white" data-filter="all">Semua</button>
+                        <button onclick="filterFiles('doc')" class="filter-btn px-3 py-1 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-200" data-filter="doc">Dokumen (PDF/Word)</button>
+                        <button onclick="filterFiles('img')" class="filter-btn px-3 py-1 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-200" data-filter="img">Gambar Asli</button>
+                        <button onclick="filterFiles('design')" class="filter-btn px-3 py-1 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-200" data-filter="design">Desain / Arsip</button>
+                    </div>
+
+                    <!-- List Container -->
+                    <div id="file-list-container" class="p-6 flex-1 space-y-3 overflow-y-auto max-h-[600px]">
+                        <!-- State Kosong -->
+                        <div id="empty-state" class="h-full flex flex-col items-center justify-center text-center py-12">
+                            <div class="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400 mb-4">
+                                <i data-lucide="inbox" class="w-8 h-8"></i>
+                            </div>
+                            <h3 class="text-sm font-bold text-slate-800">Belum ada file masuk</h3>
+                            <p class="text-xs text-slate-500 max-w-xs mt-1">Minta pelanggan scan QR Code di samping atau klik "HP Pelanggan" di atas untuk mencoba kirim file.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== VIEW 2: SIMULASI HP PELANGGAN ==================== -->
+        <div id="view-pelanggan" class="hidden max-w-md mx-auto">
+            <!-- Frame Layar HP -->
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden">
+                <!-- Header Toko di HP Pelanggan -->
+                <div class="bg-blue-600 px-6 py-6 text-white text-center relative">
+                    <div class="inline-flex items-center gap-1.5 bg-white/15 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-medium mb-2">
+                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <span>Terhubung ke Komputer Toko</span>
+                    </div>
+                    <h2 class="text-xl font-extrabold" id="cust-store-name">Z-TRONIK PRINT</h2>
+                    <p class="text-xs text-blue-100 mt-1">Kirim file dokumen, foto asli tanpa pecah, atau desain (Maks. 100 MB)</p>
+                </div>
+
+                <div class="p-6 space-y-5">
+                    <!-- Input Nama Pengirim -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Nama Anda / Nomor Meja</label>
+                        <input type="text" id="cust-name-input" placeholder="Contoh: Budi - Print Skripsi" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all">
+                    </div>
+
+                    <!-- Dropzone Upload File -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Pilih File (Bisa Banyak Sekaligus)</label>
+                        <div id="dropzone" onclick="document.getElementById('file-input').click()" class="border-2 border-dashed border-blue-300 hover:border-blue-500 bg-blue-50/50 hover:bg-blue-50 rounded-2xl p-6 text-center cursor-pointer transition-all">
+                            <input type="file" id="file-input" multiple class="hidden" onchange="handleFileSelect(event)">
+                            <div class="w-12 h-12 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center mx-auto mb-3">
+                                <i data-lucide="file-up" class="w-6 h-6"></i>
+                            </div>
+                            <p class="text-sm font-bold text-slate-800">Ketuk untuk pilih file dari HP</p>
+                            <p class="text-xs text-slate-500 mt-1">PDF, Word, Excel, JPG/PNG Asli, CDR, PSD, ZIP</p>
+                        </div>
+                    </div>
+
+                    <!-- Daftar File yang Akan Dikirim -->
+                    <div id="selected-files-preview" class="hidden space-y-2">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-slate-700">File siap kirim (<span id="selected-count">0</span>)</span>
+                            <button onclick="clearSelectedFiles()" class="text-xs text-rose-600 font-medium">Hapus semua</button>
+                        </div>
+                        <div id="selected-files-list" class="space-y-2 max-h-40 overflow-y-auto pr-1"></div>
+                    </div>
+
+                    <!-- Catatan Tambahan untuk Kasir -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Catatan Cetak / Pesanan (Opsional)</label>
+                        <textarea id="cust-note-input" rows="2" placeholder="Contoh: Print warna A4 2 rangkap, jilid lakban hitam..." class="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"></textarea>
+                    </div>
+
+                    <!-- Progress Bar Pengiriman -->
+                    <div id="upload-progress-container" class="hidden space-y-1.5">
+                        <div class="flex justify-between text-xs font-semibold text-blue-600">
+                            <span>Mengirim tanpa kompresi...</span>
+                            <span id="upload-percent">0%</span>
+                        </div>
+                        <div class="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                            <div id="upload-progress-bar" class="bg-blue-600 h-2 rounded-full transition-all duration-200" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <!-- Tombol Kirim -->
+                    <button onclick="sendFilesToStore()" id="btn-send-files" class="w-full py-3.5 px-4 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white font-bold rounded-xl shadow-lg shadow-blue-600/25 flex items-center justify-center gap-2 transition-all">
+                        <i data-lucide="send" class="w-4 h-4"></i>
+                        <span>Kirim File ke Toko Sekarang</span>
+                    </button>
+
+                    <!-- Jaminan Privasi Pelanggan -->
+                    <div class="flex items-start gap-2.5 bg-emerald-50 border border-emerald-200/80 p-3 rounded-xl text-xs text-emerald-800">
+                        <i data-lucide="shield-alert" class="w-4 h-4 text-emerald-600 shrink-0 mt-0.5"></i>
+                        <p><strong>Privasi Aman:</strong> File otomatis terhapus permanen dari sistem toko setelah selesai dicetak (<span id="cust-retention-text">30 menit</span>).</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- ==================== MODAL: LAYAR KUNCI PIN 6 DIGIT ==================== -->
+    <div id="pin-lock-overlay" class="hidden fixed inset-0 bg-slate-900/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl max-w-sm w-full p-6 text-center shadow-2xl">
+            <div class="w-14 h-14 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <i data-lucide="lock" class="w-7 h-7"></i>
+            </div>
+            <h3 class="text-lg font-extrabold text-slate-900">Layar Kasir Terkunci</h3>
+            <p class="text-xs text-slate-500 mt-1">Masukkan 6 digit PIN toko untuk melihat & mengunduh file pelanggan.</p>
+            
+            <div class="my-6">
+                <input type="password" id="pin-unlock-input" maxlength="6" placeholder="••••••" class="w-48 text-center text-2xl tracking-[0.5em] font-bold py-2.5 bg-slate-100 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600">
+                <p id="pin-error-msg" class="text-xs text-rose-600 font-medium mt-2 hidden">PIN salah! Coba lagi (Default: 123456)</p>
+            </div>
+
+            <button onclick="verifyPinUnlock()" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-sm transition-colors">
+                Buka Kunci Layar
+            </button>
+        </div>
+    </div>
+
+    <!-- ==================== MODAL: PENGATURAN TOKO ==================== -->
+    <div id="settings-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-40 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-md w-full overflow-hidden shadow-2xl">
+            <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+                <h3 class="font-bold text-slate-900">Pengaturan Toko</h3>
+                <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-slate-600">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="p-6 space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">Nama Toko / Usaha</label>
+                    <input type="text" id="setting-store-name" value="Z-TRONIK PRINT" class="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">Alamat Website Publik Toko (Untuk QR Code HP)</label>
+                    <input type="url" id="setting-public-url" placeholder="Contoh: https://file-ztronik.vercel.app" class="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm font-mono">
+                    <p class="text-[11px] text-slate-500 mt-1">Isi dengan link hosting setelah file HTML ini di-upload online agar QR bisa di-scan HP pelanggan.</p>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">Waktu Hapus Otomatis File</label>
+                    <select id="setting-retention" class="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm bg-white">
+                        <option value="15">15 Menit (Super Aman)</option>
+                        <option value="30" selected>30 Menit (Standar)</option>
+                        <option value="60">1 Jam</option>
+                        <option value="180">3 Jam</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">PIN Keamanan Kasir (6 Digit)</label>
+                    <input type="text" id="setting-pin" maxlength="6" value="123456" class="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-sm font-mono">
+                </div>
+            </div>
+            <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
+                <button onclick="closeSettingsModal()" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-xl">Batal</button>
+                <button onclick="saveSettings()" class="px-4 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-xl">Simpan Perubahan</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== MODAL: PREVIEW FILE & ANALISIS WARNA ==================== -->
+    <div id="preview-modal" class="hidden fixed inset-0 bg-slate-900/75 backdrop-blur-sm z-40 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl">
+            <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+                <div class="truncate pr-4">
+                    <h3 class="font-bold text-slate-900 truncate" id="preview-filename">Nama_File.pdf</h3>
+                    <p class="text-xs text-slate-500" id="preview-meta">Pengirim: Budi • 2.4 MB</p>
+                </div>
+                <button onclick="closePreviewModal()" class="text-slate-400 hover:text-slate-600 shrink-0">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="p-6 space-y-4">
+                <!-- Area Visual Preview -->
+                <div id="preview-visual-box" class="bg-slate-100 rounded-xl p-4 flex flex-col items-center justify-center min-h-[200px] max-h-[300px] overflow-hidden border border-slate-200">
+                    <!-- Diisi dinamis oleh JS -->
+                </div>
+
+                <!-- Fitur Pro: Estimasi Separasi Warna Cetak (Mirip Filetoko Pro) -->
+                <div class="bg-indigo-50/80 border border-indigo-100 rounded-xl p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
+                            <i data-lucide="palette" class="w-4 h-4 text-indigo-600"></i>
+                            <span>Analisis Warna & Estimasi Cetak</span>
+                        </span>
+                        <span class="text-[10px] font-bold bg-indigo-600 text-white px-2 py-0.5 rounded-full">FITUR PRO</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3 text-xs">
+                        <div class="bg-white p-2.5 rounded-lg border border-indigo-100">
+                            <span class="text-slate-500 block">Deteksi Dominan:</span>
+                            <strong class="text-slate-800" id="preview-color-type">Full Color (CMYK)</strong>
+                        </div>
+                        <div class="bg-white p-2.5 rounded-lg border border-indigo-100">
+                            <span class="text-slate-500 block">Kualitas Resolusi:</span>
+                            <strong class="text-emerald-600">Asli (Tanpa Kompresi)</strong>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Catatan Pelanggan -->
+                <div id="preview-note-box" class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900">
+                    <strong>Catatan Pelanggan:</strong> <span id="preview-note-text">-</span>
+                </div>
+            </div>
+            <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
+                <button onclick="closePreviewModal()" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-xl">Tutup</button>
+                <button id="preview-download-btn" class="px-5 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-xl flex items-center gap-1.5">
+                    <i data-lucide="download" class="w-4 h-4"></i>
+                    <span>Unduh File Asli</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== POSTER QR KHUSUS PRINT MEJA KASIR ==================== -->
+    <div id="printable-qr-poster" class="hidden">
+        <div class="border-4 border-slate-900 rounded-3xl p-10 max-w-md mx-auto text-center">
+            <h1 class="text-3xl font-black tracking-tight text-slate-900 uppercase" id="print-store-name">Z-TRONIK PRINT</h1>
+            <p class="text-base font-semibold text-slate-600 mt-2">KIRIM FILE CETAK LEBIH CEPAT</p>
+            <div class="my-8 p-4 border-2 border-slate-300 rounded-2xl inline-block">
+                <div id="print-qrcode-container"></div>
+            </div>
+            <div class="space-y-2 text-left bg-slate-100 p-5 rounded-2xl text-sm text-slate-800">
+                <p class="font-bold">Cara Kirim File:</p>
+                <p>1. Buka Kamera HP / Google Lens</p>
+                <p>2. Scan QR Code di atas</p>
+                <p>3. Pilih file & klik Kirim (Foto tidak pecah!)</p>
+            </div>
+            <p class="text-xs text-slate-500 mt-6">File otomatis terhapus setelah dicetak. Privasi terjaga.</p>
+        </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toast-container" class="fixed bottom-4 right-4 z-50 space-y-2 pointer-events-none"></div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, addDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // ==================== INISIALISASI CLOUD REAL-TIME ====================
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        let currentUser = null;
+        let isInitialLoad = true;
+
+        // ==================== STATE & KONFIGURASI APLIKASI ====================
+        let storeConfig = {
+            name: 'Z-TRONIK PRINT',
+            code: 'ZTR-88',
+            publicUrl: '',
+            retentionMinutes: 30,
+            pin: '123456',
+            isLocked: false
+        };
+
+        // ==================== GENERATOR QR CODE TOKO ====================
+        function getTargetCustomerUrl() {
+            const slug = storeConfig.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+            // Gunakan URL publik dari pengaturan jika diisi, jika tidak gunakan URL saat ini
+            let baseUrl = storeConfig.publicUrl ? storeConfig.publicUrl.trim() : `${window.location.origin}${window.location.pathname}`;
+            // Hapus trailing slash jika ada
+            baseUrl = baseUrl.replace(/\/+$/, '');
+            const separator = baseUrl.includes('?') ? '&' : '?';
+            return `${baseUrl}${separator}toko=${slug}&mode=pelanggan`;
+        }
+
+        window.generateStoreQR = function() {
+            const slug = storeConfig.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+            const storeUrl = getTargetCustomerUrl();
+            
+            // Cek apakah URL masih bersifat lokal/sandbox preview
+            const isLocalOrSandbox = storeUrl.startsWith('blob:') || 
+                                     storeUrl.startsWith('file:') || 
+                                     storeUrl.includes('localhost') || 
+                                     storeUrl.includes('127.0.0.1') ||
+                                     storeUrl.includes('usercontent.goog') ||
+                                     storeUrl.includes('about:srcdoc');
+
+            const warningBox = document.getElementById('local-url-warning');
+            if (warningBox) {
+                if (isLocalOrSandbox && !storeConfig.publicUrl) {
+                    warningBox.classList.remove('hidden');
+                } else {
+                    warningBox.classList.add('hidden');
+                }
+            }
+
+            document.getElementById('store-url-text').textContent = storeConfig.publicUrl ? storeConfig.publicUrl.replace(/^https?:\/\//, '') : `kirimfile.toko/${slug}`;
+            document.getElementById('header-store-name').textContent = storeConfig.name;
+            document.getElementById('cust-store-name').textContent = storeConfig.name;
+            document.getElementById('print-store-name').textContent = storeConfig.name;
+
+            const qrContainer = document.getElementById('qrcode-container');
+            qrContainer.innerHTML = '';
+            new QRCode(qrContainer, {
+                text: storeUrl,
+                width: 180,
+                height: 180,
+                colorDark: "#0f172a",
+                colorLight: "#ffffff",
+                correctLevel: QRCode.CorrectLevel.H
+            });
+
+            const printQrContainer = document.getElementById('print-qrcode-container');
+            printQrContainer.innerHTML = '';
+            new QRCode(printQrContainer, {
+                text: storeUrl,
+                width: 240,
+                height: 240,
+                colorDark: "#000000",
+                colorLight: "#ffffff",
+                correctLevel: QRCode.CorrectLevel.H
+            });
+        };
+
+        // ==================== NOTIFIKASI SUARA (TONE.JS) ====================
+        function playNotificationSound() {
+            try {
+                if (Tone.context.state !== 'running') {
+                    Tone.start();
+                }
+                const synth = new Tone.PolySynth(Tone.Synth).toDestination();
+                const now = Tone.now();
+                synth.triggerAttackRelease("C5", "16n", now);
+                synth.triggerAttackRelease("E5", "16n", now + 0.1);
+                synth.triggerAttackRelease("G5", "8n", now + 0.2);
+            } catch (e) {
+                console.warn("Audio konteks belum aktif:", e);
+            }
+        }
+
+        // ==================== NAVIGASI TAB (KASIR VS PELANGGAN) ====================
+        window.switchTab = function(mode) {
+            const viewKasir = document.getElementById('view-kasir');
+            const viewPelanggan = document.getElementById('view-pelanggan');
+            const tabKasir = document.getElementById('tab-kasir');
+            const tabPelanggan = document.getElementById('tab-pelanggan');
+
+            if (mode === 'kasir') {
+                viewKasir.classList.remove('hidden');
+                viewPelanggan.classList.add('hidden');
+                tabKasir.className = "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition-all bg-white text-blue-600 shadow-sm";
+                tabPelanggan.className = "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition-all text-slate-600 hover:text-slate-900";
+            } else {
+                viewKasir.classList.add('hidden');
+                viewPelanggan.classList.remove('hidden');
+                tabPelanggan.className = "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition-all bg-white text-blue-600 shadow-sm";
+                tabKasir.className = "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition-all text-slate-600 hover:text-slate-900";
+            }
+        };
+
+        // ==================== LOGIKA SISI PELANGGAN (UPLOAD FILE) ====================
+        let selectedCustomerFiles = [];
+
+        window.handleFileSelect = function(event) {
+            const files = Array.from(event.target.files);
+            if (!files.length) return;
+
+            for (const file of files) {
+                if (file.size > 100 * 1024 * 1024) {
+                    showToast(`File ${file.name} melebihi batas 100 MB!`, 'error');
+                    continue;
+                }
+                selectedCustomerFiles.push(file);
+            }
+            renderSelectedCustomerFiles();
+        };
+
+        function renderSelectedCustomerFiles() {
+            const previewBox = document.getElementById('selected-files-preview');
+            const listEl = document.getElementById('selected-files-list');
+            const countEl = document.getElementById('selected-count');
+
+            if (selectedCustomerFiles.length === 0) {
+                previewBox.classList.add('hidden');
+                return;
+            }
+
+            previewBox.classList.remove('hidden');
+            countEl.textContent = selectedCustomerFiles.length;
+            listEl.innerHTML = '';
+
+            selectedCustomerFiles.forEach((file, idx) => {
+                const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+                const item = document.createElement('div');
+                item.className = "flex items-center justify-between bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-xs";
+                item.innerHTML = `
+                    <div class="truncate pr-2">
+                        <p class="font-semibold text-slate-800 truncate">${file.name}</p>
+                        <p class="text-slate-500">${sizeMB} MB • Kualitas Asli</p>
+                    </div>
+                    <button onclick="removeSelectedFile(${idx})" class="text-rose-500 hover:text-rose-700 p-1">
+                        <i data-lucide="x" class="w-4 h-4"></i>
+                    </button>
+                `;
+                listEl.appendChild(item);
+            });
+            lucide.createIcons();
+        }
+
+        window.removeSelectedFile = function(index) {
+            selectedCustomerFiles.splice(index, 1);
+            renderSelectedCustomerFiles();
+        };
+
+        window.clearSelectedFiles = function() {
+            selectedCustomerFiles = [];
+            document.getElementById('file-input').value = '';
+            renderSelectedCustomerFiles();
+        };
+
+        // Fungsi helper membaca file untuk preview lokal/cloud kecil (< 800 KB)
+        function readFileAsDataURL(file) {
+            return new Promise((resolve) => {
+                if (file.size > 800 * 1024) {
+                    resolve(null);
+                    return;
+                }
+                const reader = new FileReader();
+                reader.onload = (e) => resolve(e.target.result);
+                reader.onerror = () => resolve(null);
+                reader.readAsDataURL(file);
+            });
+        }
+
+        window.sendFilesToStore = async function() {
+            if (selectedCustomerFiles.length === 0) {
+                showToast('Pilih minimal 1 file terlebih dahulu!', 'error');
+                return;
+            }
+            if (!currentUser) {
+                showToast('Sedang menghubungkan ke server, coba sebentar lagi...', 'error');
+                return;
+            }
+
+            const custName = document.getElementById('cust-name-input').value.trim() || 'Pelanggan Tanpa Nama';
+            const custNote = document.getElementById('cust-note-input').value.trim() || '-';
+            const progressContainer = document.getElementById('upload-progress-container');
+            const progressBar = document.getElementById('upload-progress-bar');
+            const percentText = document.getElementById('upload-percent');
+            const btnSend = document.getElementById('btn-send-files');
+
+            btnSend.disabled = true;
+            btnSend.classList.add('opacity-60');
+            progressContainer.classList.remove('hidden');
+
+            try {
+                const filesColRef = collection(db, 'artifacts', appId, 'public', 'data', 'incoming_files');
+                const total = selectedCustomerFiles.length;
+
+                for (let i = 0; i < total; i++) {
+                    const file = selectedCustomerFiles[i];
+                    const pct = Math.round(((i + 0.5) / total) * 100);
+                    progressBar.style.width = `${pct}%`;
+                    percentText.textContent = `${pct}%`;
+
+                    const dataUrl = await readFileAsDataURL(file);
+                    const now = Date.now();
+                    const expiresAt = now + (storeConfig.retentionMinutes * 60 * 1000);
+
+                    await addDoc(filesColRef, {
+                        name: file.name,
+                        size: file.size,
+                        type: file.type || 'application/octet-stream',
+                        sender: custName,
+                        note: custNote,
+                        uploadedAt: now,
+                        expiresAt: expiresAt,
+                        dataUrl: dataUrl,
+                        colorMode: detectColorEstimation(file.name)
+                    });
+                }
+
+                progressBar.style.width = '100%';
+                percentText.textContent = '100%';
+
+                setTimeout(() => {
+                    progressContainer.classList.add('hidden');
+                    progressBar.style.width = '0%';
+                    btnSend.disabled = false;
+                    btnSend.classList.remove('opacity-60');
+                    clearSelectedFiles();
+                    document.getElementById('cust-note-input').value = '';
+                    showToast('Berhasil! File telah diterima komputer kasir.', 'success');
+                }, 400);
+
+            } catch (err) {
+                console.error("Gagal mengirim file:", err);
+                progressContainer.classList.add('hidden');
+                btnSend.disabled = false;
+                btnSend.classList.remove('opacity-60');
+                showToast('Gagal mengirim file ke server.', 'error');
+            }
+        };
+
+        // ==================== LOGIKA SISI KASIR (INBOX & FILTER) ====================
+        let incomingFiles = [];
+        let currentFilter = 'all';
+
+        function detectCategory(filename) {
+            const ext = filename.split('.').pop().toLowerCase();
+            if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt'].includes(ext)) return 'doc';
+            if (['jpg', 'jpeg', 'png', 'webp', 'bmp', 'tiff'].includes(ext)) return 'img';
+            return 'design';
+        }
+
+        function detectColorEstimation(filename) {
+            const ext = filename.split('.').pop().toLowerCase();
+            if (['jpg', 'jpeg', 'png', 'cdr', 'psd', 'ai'].includes(ext)) return 'Full Color (CMYK / RGB)';
+            return 'Campuran / Teks Hitam';
+        }
+
+        window.filterFiles = function(filterType) {
+            currentFilter = filterType;
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                if (btn.dataset.filter === filterType) {
+                    btn.className = "filter-btn active px-3 py-1 rounded-lg text-xs font-semibold bg-slate-800 text-white";
+                } else {
+                    btn.className = "filter-btn px-3 py-1 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-200";
+                }
+            });
+            renderFileList();
+        };
+
+        function renderFileList() {
+            const container = document.getElementById('file-list-container');
+            const badgeCount = document.getElementById('badge-count');
+            const statActive = document.getElementById('stat-active-files');
+            const statSize = document.getElementById('stat-total-size');
+
+            const now = Date.now();
+            const validFiles = incomingFiles.filter(f => f.expiresAt > now);
+
+            badgeCount.textContent = validFiles.length;
+            statActive.textContent = validFiles.length;
+            const totalBytes = validFiles.reduce((acc, f) => acc + (f.size || 0), 0);
+            statSize.textContent = `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`;
+
+            const filtered = validFiles.filter(f => {
+                if (currentFilter === 'all') return true;
+                return detectCategory(f.name) === currentFilter;
+            });
+
+            if (filtered.length === 0) {
+                container.innerHTML = `
+                    <div id="empty-state" class="h-full flex flex-col items-center justify-center text-center py-12">
+                        <div class="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400 mb-4">
+                            <i data-lucide="inbox" class="w-8 h-8"></i>
+                        </div>
+                        <h3 class="text-sm font-bold text-slate-800">Belum ada file masuk</h3>
+                        <p class="text-xs text-slate-500 max-w-xs mt-1">Minta pelanggan scan QR Code di samping atau klik "HP Pelanggan" di atas untuk mencoba kirim file.</p>
+                    </div>
+                `;
+                lucide.createIcons();
+                return;
+            }
+
+            container.innerHTML = '';
+            filtered.forEach(file => {
+                const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+                const remainingMs = Math.max(0, file.expiresAt - now);
+                const remainingMins = Math.ceil(remainingMs / 60000);
+                const cat = detectCategory(file.name);
+
+                let iconName = 'file-text';
+                let iconBg = 'bg-blue-100 text-blue-600';
+                if (cat === 'img') {
+                    iconName = 'image';
+                    iconBg = 'bg-emerald-100 text-emerald-600';
+                } else if (cat === 'design') {
+                    iconName = 'layers';
+                    iconBg = 'bg-purple-100 text-purple-600';
+                }
+
+                const card = document.createElement('div');
+                card.className = "animate-slide-in bg-white border border-slate-200 hover:border-blue-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all shadow-sm";
+                card.innerHTML = `
+                    <div class="flex items-start gap-3.5 min-w-0">
+                        <div class="w-11 h-11 ${iconBg} rounded-xl flex items-center justify-center shrink-0">
+                            <i data-lucide="${iconName}" class="w-5 h-5"></i>
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-center gap-2">
+                                <h4 class="text-sm font-bold text-slate-900 truncate">${file.name}</h4>
+                                <span class="px-2 py-0.5 text-[10px] font-bold bg-slate-100 text-slate-600 rounded-md shrink-0">${sizeMB} MB</span>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-0.5">Pengirim: <strong class="text-slate-700">${file.sender}</strong> • Hapus dalam <span class="text-amber-600 font-semibold">${remainingMins} mnt</span></p>
+                            ${file.note && file.note !== '-' ? `<p class="text-xs text-amber-800 bg-amber-50 px-2.5 py-1 rounded-lg mt-1.5 inline-block border border-amber-200/70">Catatan: ${file.note}</p>` : ''}
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                        <button onclick="openPreviewModal('${file.id}')" class="px-3 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors flex items-center gap-1.5">
+                            <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+                            <span>Cek</span>
+                        </button>
+                        <button onclick="downloadFileItem('${file.id}')" class="px-3.5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors flex items-center gap-1.5 shadow-sm">
+                            <i data-lucide="download" class="w-3.5 h-3.5"></i>
+                            <span>Unduh</span>
+                        </button>
+                        <button onclick="deleteFileItem('${file.id}')" title="Hapus Sekarang" class="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+            lucide.createIcons();
+        }
+
+        window.downloadFileItem = function(fileId) {
+            const file = incomingFiles.find(f => f.id === fileId);
+            if (!file) return;
+
+            if (file.dataUrl) {
+                const a = document.createElement('a');
+                a.href = file.dataUrl;
+                a.download = file.name;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                showToast(`Mengunduh ${file.name}...`, 'success');
+            } else {
+                // Simulasi unduh untuk file demo atau file besar
+                const blob = new Blob([`File: ${file.name}\nPengirim: ${file.sender}\nCatatan: ${file.note}`], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = file.name;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                showToast(`Mengunduh ${file.name}...`, 'success');
+            }
+        };
+
+        window.deleteFileItem = async function(fileId) {
+            if (!currentUser) return;
+            try {
+                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'incoming_files', fileId));
+                showToast('File dihapus permanen.', 'info');
+            } catch (e) {
+                console.error("Gagal menghapus file:", e);
+            }
+        };
+
+        window.clearAllFiles = async function() {
+            if (!currentUser || incomingFiles.length === 0) return;
+            for (const f of incomingFiles) {
+                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'incoming_files', f.id));
+            }
+            showToast('Semua antrean file dibersihkan.', 'info');
+        };
+
+        window.addDemoFiles = async function() {
+            if (!currentUser) return;
+            const now = Date.now();
+            const expiresAt = now + (storeConfig.retentionMinutes * 60 * 1000);
+            const filesColRef = collection(db, 'artifacts', appId, 'public', 'data', 'incoming_files');
+
+            await addDoc(filesColRef, {
+                name: 'Skripsi_Bab1_Revisi_Final.pdf',
+                size: 3450000,
+                type: 'application/pdf',
+                sender: 'Andi (Meja 2)',
+                note: 'Print A4 HVS 80gr, rangkap 1, jilid mika biru',
+                uploadedAt: now,
+                expiresAt: expiresAt,
+                dataUrl: null,
+                colorMode: 'Campuran / Teks Hitam'
+            });
+            showToast('File simulasi ditambahkan!', 'success');
+        };
+
+        // ==================== MODAL PREVIEW FILE ====================
+        window.openPreviewModal = function(fileId) {
+            const file = incomingFiles.find(f => f.id === fileId);
+            if (!file) return;
+
+            document.getElementById('preview-filename').textContent = file.name;
+            const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+            document.getElementById('preview-meta').textContent = `Pengirim: ${file.sender} • ${sizeMB} MB`;
+            document.getElementById('preview-color-type').textContent = file.colorMode || 'Full Color (CMYK)';
+            document.getElementById('preview-note-text').textContent = file.note || '-';
+
+            const visualBox = document.getElementById('preview-visual-box');
+            if (file.dataUrl && file.type && file.type.startsWith('image/')) {
+                visualBox.innerHTML = `<img src="${file.dataUrl}" alt="${file.name}" class="max-h-60 rounded-lg object-contain shadow-sm">`;
+            } else {
+                visualBox.innerHTML = `
+                    <div class="w-16 h-16 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center mb-2">
+                        <i data-lucide="file-check-2" class="w-8 h-8"></i>
+                    </div>
+                    <p class="text-xs font-bold text-slate-700">${file.name}</p>
+                    <p class="text-[11px] text-slate-500 mt-0.5">Siap cetak • Resolusi penuh terjaga</p>
+                `;
+            }
+
+            const dlBtn = document.getElementById('preview-download-btn');
+            dlBtn.onclick = () => downloadFileItem(file.id);
+
+            document.getElementById('preview-modal').classList.remove('hidden');
+            lucide.createIcons();
+        };
+
+        window.closePreviewModal = function() {
+            document.getElementById('preview-modal').classList.add('hidden');
+        };
+
+        // ==================== KEAMANAN PIN 6 DIGIT ====================
+        window.togglePinLock = function() {
+            storeConfig.isLocked = true;
+            document.getElementById('pin-unlock-input').value = '';
+            document.getElementById('pin-error-msg').classList.add('hidden');
+            document.getElementById('pin-lock-overlay').classList.remove('hidden');
+        };
+
+        window.verifyPinUnlock = function() {
+            const inputPin = document.getElementById('pin-unlock-input').value.trim();
+            if (inputPin === storeConfig.pin) {
+                storeConfig.isLocked = false;
+                document.getElementById('pin-lock-overlay').classList.add('hidden');
+                showToast('Layar kasir berhasil dibuka.', 'success');
+            } else {
+                document.getElementById('pin-error-msg').classList.remove('hidden');
+            }
+        };
+
+        // ==================== PENGATURAN & PRINT POSTER ====================
+        window.openSettingsModal = function() {
+            document.getElementById('setting-store-name').value = storeConfig.name;
+            document.getElementById('setting-public-url').value = storeConfig.publicUrl || '';
+            document.getElementById('setting-retention').value = storeConfig.retentionMinutes;
+            document.getElementById('setting-pin').value = storeConfig.pin;
+            document.getElementById('settings-modal').classList.remove('hidden');
+        };
+
+        window.closeSettingsModal = function() {
+            document.getElementById('settings-modal').classList.add('hidden');
+        };
+
+        window.saveSettings = async function() {
+            if (!currentUser) return;
+            const newName = document.getElementById('setting-store-name').value.trim();
+            const newPublicUrl = document.getElementById('setting-public-url').value.trim();
+            const newRetention = parseInt(document.getElementById('setting-retention').value, 10);
+            const newPin = document.getElementById('setting-pin').value.trim();
+
+            if (newPin.length !== 6 || isNaN(newPin)) {
+                showToast('PIN harus berupa 6 digit angka!', 'error');
+                return;
+            }
+
+            const updatedName = newName || storeConfig.name;
+
+            try {
+                const settingsDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'store_settings', 'main_config');
+                await setDoc(settingsDocRef, {
+                    name: updatedName,
+                    publicUrl: newPublicUrl,
+                    retentionMinutes: newRetention,
+                    pin: newPin
+                }, { merge: true });
+
+                closeSettingsModal();
+                showToast('Pengaturan toko tersimpan di Cloud!', 'success');
+            } catch (e) {
+                console.error("Gagal menyimpan pengaturan:", e);
+                showToast('Gagal menyimpan pengaturan ke server.', 'error');
+            }
+        };
+
+        window.printQrPoster = function() {
+            window.print();
+        };
+
+        window.copyStoreLink = function() {
+            const fullUrl = getTargetCustomerUrl();
+            const tempInput = document.createElement('input');
+            tempInput.value = fullUrl;
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            document.execCommand('copy');
+            document.body.removeChild(tempInput);
+            showToast('Tautan khusus pelanggan disalin!', 'success');
+        };
+
+        // ==================== TOAST NOTIFICATION ====================
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            let bgClass = 'bg-slate-900 text-white';
+            if (type === 'success') bgClass = 'bg-emerald-600 text-white';
+            if (type === 'error') bgClass = 'bg-rose-600 text-white';
+
+            toast.className = `${bgClass} px-4 py-3 rounded-xl shadow-lg text-xs font-semibold flex items-center gap-2 animate-slide-in`;
+            toast.textContent = message;
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.remove();
+            }, 3500);
+        }
+
+        // ==================== SINKRONISASI FIRESTORE & AUTH ====================
+        function startRealtimeListeners() {
+            const settingsDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'store_settings', 'main_config');
+            onSnapshot(settingsDocRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    storeConfig.name = data.name || storeConfig.name;
+                    storeConfig.publicUrl = data.publicUrl !== undefined ? data.publicUrl : storeConfig.publicUrl;
+                    storeConfig.retentionMinutes = data.retentionMinutes || storeConfig.retentionMinutes;
+                    storeConfig.pin = data.pin || storeConfig.pin;
+
+                    document.getElementById('retention-label').textContent = `${storeConfig.retentionMinutes} Menit`;
+                    document.getElementById('cust-retention-text').textContent = `${storeConfig.retentionMinutes} menit`;
+                    generateStoreQR();
+                }
+            }, (error) => {
+                console.error("Error listener pengaturan:", error);
+            });
+
+            const filesColRef = collection(db, 'artifacts', appId, 'public', 'data', 'incoming_files');
+            onSnapshot(filesColRef, (snapshot) => {
+                const list = [];
+                snapshot.forEach((docItem) => {
+                    list.push({ id: docItem.id, ...docItem.data() });
+                });
+
+                list.sort((a, b) => (b.uploadedAt || 0) - (a.uploadedAt || 0));
+
+                if (!isInitialLoad && list.length > incomingFiles.length) {
+                    playNotificationSound();
+                    showToast('File baru masuk dari pelanggan!', 'success');
+                }
+
+                incomingFiles = list;
+                isInitialLoad = false;
+                renderFileList();
+            }, (error) => {
+                console.error("Error listener file:", error);
+            });
+        }
+
+        async function initApp() {
+            lucide.createIcons();
+            generateStoreQR();
+
+            // Deteksi parameter URL ?mode=pelanggan saat dibuka dari QR HP
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('mode') === 'pelanggan') {
+                switchTab('pelanggan');
+            }
+
+            // Timer pembersihan otomatis setiap 15 detik
+            setInterval(async () => {
+                const now = Date.now();
+                renderFileList();
+                if (!currentUser) return;
+                for (const f of incomingFiles) {
+                    if (f.expiresAt && f.expiresAt <= now) {
+                        try {
+                            await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'incoming_files', f.id));
+                        } catch (e) {
+                            console.warn("Auto-delete gagal:", e);
+                        }
+                    }
+                }
+            }, 15000);
+
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (err) {
+                console.error("Gagal autentikasi Firebase:", err);
+                const badge = document.getElementById('connection-status-badge');
+                badge.textContent = 'Offline';
+                badge.className = 'px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-rose-100 text-rose-700 rounded-full';
+            }
+
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    currentUser = user;
+                    const badge = document.getElementById('connection-status-badge');
+                    badge.textContent = 'Cloud Aktif';
+                    badge.className = 'px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-700 rounded-full';
+                    startRealtimeListeners();
+                }
+            });
+        }
+
+        window.addEventListener('DOMContentLoaded', initApp);
+    </script>
+</body>
+</html>
