@@ -248,7 +248,7 @@
                         <span>Terhubung ke Komputer Toko</span>
                     </div>
                     <h2 class="text-xl font-extrabold" id="cust-store-name">Z-TRONIK PRINT</h2>
-                    <p class="text-xs text-blue-100 mt-1">Kirim file dokumen, foto asli tanpa pecah, atau desain (Maks. 100 MB)</p>
+                    <p class="text-xs text-blue-100 mt-1">Kirim file dokumen, foto asli tanpa pecah, atau desain (Maks. 20 MB)</p>
                 </div>
 
                 <div class="p-6 space-y-5">
@@ -450,83 +450,242 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, addDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, deleteDoc, getDocs, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // ==================== INISIALISASI CLOUD REAL-TIME ====================
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        // Tempel config Firebase Anda di sini agar HP pelanggan benar-benar terhubung ke kasir.
+        // Jika dibiarkan null, aplikasi jalan di "Mode Lokal" (demo di satu browser saja).
+        const MY_FIREBASE_CONFIG = null;
+        const MAX_MB = 20, CHUNK = 700000;
 
-        let currentUser = null;
-        let isInitialLoad = true;
+        let cfg = null;
+        try { cfg = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : MY_FIREBASE_CONFIG; } catch (e) { cfg = null; }
 
-        // ==================== STATE & KONFIGURASI APLIKASI ====================
-        let storeConfig = {
-            name: 'Z-TRONIK PRINT',
-            code: 'ZTR-88',
-            publicUrl: '',
-            retentionMinutes: 30,
-            pin: '123456',
-            isLocked: false
-        };
+        let db = null, files = [], selected = [], filter = 'all', isInitialLoad = true;
+        let storeConfig = { name: 'Z-TRONIK PRINT', code: 'ZTR-88', publicUrl: '', retentionMinutes: 30, pin: '123456' };
+        try { Object.assign(storeConfig, JSON.parse(localStorage.getItem('kirimfile-config') || '{}')); } catch (e) {}
 
-        // ==================== GENERATOR QR CODE TOKO ====================
-        function getTargetCustomerUrl() {
-            // Menggunakan URL dasar GitHub Pages abang secara eksplisit atau otomatis dari browser
-            let baseUrl = storeConfig.publicUrl ? storeConfig.publicUrl.trim() : window.location.origin + window.location.pathname;
-            baseUrl = baseUrl.replace(/\/+$/, '');
-            
-            // Format Query Parameter yang kompatibel 100% dengan GitHub Pages tanpa error 404
-            return `${baseUrl}/?view=pelanggan`;
+        const $ = id => document.getElementById(id);
+        const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        const fmtSize = b => b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
+        const kind = n => { const e = n.split('.').pop().toLowerCase();
+            if (['jpg','jpeg','png','gif','webp','bmp'].includes(e)) return 'img';
+            if (['pdf','doc','docx','xls','xlsx','ppt','pptx','txt'].includes(e)) return 'doc';
+            return 'design'; };
+        const icons = { img: 'image', doc: 'file-text', design: 'archive' };
+
+        function toast(msg) {
+            const t = document.createElement('div');
+            t.className = 'animate-slide-in bg-slate-900 text-white text-xs font-medium px-4 py-2.5 rounded-xl shadow-lg';
+            t.textContent = msg; $('toast-container').appendChild(t);
+            setTimeout(() => t.remove(), 3500);
+        }
+        function setBadge(text, ok) {
+            const b = $('connection-status-badge'); b.textContent = text;
+            b.className = 'px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full ' + (ok ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700');
         }
 
-        window.generateStoreQR = function() {
-            const storeUrl = getTargetCustomerUrl();
-            
-            // Tampilkan URL ringkas di layar
-            const displayUrl = storeUrl.replace(/^https?:\/\//, '');
-            document.getElementById('store-url-text').textContent = displayUrl;
-            document.getElementById('header-store-name').textContent = storeConfig.name;
-            document.getElementById('cust-store-name').textContent = storeConfig.name;
-            document.getElementById('print-store-name').textContent = storeConfig.name;
-
-            const qrContainer = document.getElementById('qrcode-container');
-            qrContainer.innerHTML = '';
-            new QRCode(qrContainer, {
-                text: storeUrl,
-                width: 180,
-                height: 180,
-                colorDark: "#0f172a",
-                colorLight: "#ffffff",
-                correctLevel: QRCode.CorrectLevel.H
-            });
-
-            const printQrContainer = document.getElementById('print-qrcode-container');
-            printQrContainer.innerHTML = '';
-            new QRCode(printQrContainer, {
-                text: storeUrl,
-                width: 240,
-                height: 240,
-                colorDark: "#000000",
-                colorLight: "#ffffff",
-                correctLevel: QRCode.CorrectLevel.H
+        // ===== URL & QR (perbaikan utama penyebab 404) =====
+        function isLocalHost() { return location.protocol === 'file:' || ['localhost', '127.0.0.1'].includes(location.hostname); }
+        function getTargetCustomerUrl() {
+            let u = (storeConfig.publicUrl || '').trim();
+            if (!u) {
+                if (location.protocol === 'file:') return '';
+                u = location.origin + location.pathname;
+            }
+            u = u.split('?')[0].split('#')[0].replace(/\/+$/, '');
+            // Jangan tambahkan "/" setelah nama file .html, itu yang bikin 404
+            return u + (/\.html?$/i.test(u) ? '' : '/') + '?view=pelanggan';
+        }
+        window.generateStoreQR = function () {
+            const url = getTargetCustomerUrl();
+            $('store-url-text').textContent = url ? url.replace(/^https?:\/\//, '') : '(isi URL publik di Pengaturan)';
+            ['header-store-name', 'cust-store-name', 'print-store-name'].forEach(id => $(id).textContent = storeConfig.name);
+            $('store-code-display').textContent = 'KODE: ' + storeConfig.code;
+            $('retention-label').textContent = storeConfig.retentionMinutes + ' Menit';
+            $('cust-retention-text').textContent = storeConfig.retentionMinutes + ' menit';
+            $('local-url-warning').classList.toggle('hidden', !(isLocalHost() && !storeConfig.publicUrl));
+            [['qrcode-container', 180, '#0f172a'], ['print-qrcode-container', 240, '#000000']].forEach(([id, size, dark]) => {
+                const c = $(id); c.innerHTML = '';
+                if (url) new QRCode(c, { text: url, width: size, height: size, colorDark: dark, colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.H });
             });
         };
+        window.copyStoreLink = () => {
+            const u = getTargetCustomerUrl(); if (!u) return toast('URL belum tersedia');
+            navigator.clipboard.writeText(u).then(() => toast('Link disalin'), () => toast('Gagal menyalin'));
+        };
+        window.printQrPoster = () => window.print();
 
-// ... existing code ... -->
+        // ===== Tab, PIN, Pengaturan =====
+        window.switchTab = function (t) {
+            $('view-kasir').classList.toggle('hidden', t !== 'kasir');
+            $('view-pelanggan').classList.toggle('hidden', t !== 'pelanggan');
+            const on = 'bg-white text-blue-600 shadow-sm', off = 'text-slate-600 hover:text-slate-900';
+            const base = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition-all ';
+            $('tab-kasir').className = base + (t === 'kasir' ? on : off);
+            $('tab-pelanggan').className = base + (t === 'pelanggan' ? on : off);
+        };
+        window.togglePinLock = () => { $('pin-lock-overlay').classList.remove('hidden'); $('pin-unlock-input').value = ''; $('pin-error-msg').classList.add('hidden'); };
+        window.verifyPinUnlock = () => {
+            if ($('pin-unlock-input').value === storeConfig.pin) $('pin-lock-overlay').classList.add('hidden');
+            else $('pin-error-msg').classList.remove('hidden');
+        };
+        window.openSettingsModal = () => {
+            $('setting-store-name').value = storeConfig.name; $('setting-public-url').value = storeConfig.publicUrl;
+            $('setting-retention').value = storeConfig.retentionMinutes; $('setting-pin').value = storeConfig.pin;
+            $('settings-modal').classList.remove('hidden');
+        };
+        window.closeSettingsModal = () => $('settings-modal').classList.add('hidden');
+        window.saveSettings = () => {
+            const pin = $('setting-pin').value.trim();
+            if (!/^\d{6}$/.test(pin)) return toast('PIN harus 6 digit angka');
+            storeConfig.name = $('setting-store-name').value.trim() || 'Toko';
+            storeConfig.publicUrl = $('setting-public-url').value.trim();
+            storeConfig.retentionMinutes = parseInt($('setting-retention').value, 10);
+            storeConfig.pin = pin;
+            try { localStorage.setItem('kirimfile-config', JSON.stringify(storeConfig)); } catch (e) {}
+            generateStoreQR(); closeSettingsModal(); toast('Pengaturan disimpan');
+        };
+
+        // ===== Penyimpanan (Firestore bila ada config, kalau tidak: memori lokal) =====
+        const filesCol = () => collection(db, 'stores', storeConfig.code, 'files');
+        async function addFile(meta, blob) {
+            if (!db) { files.push({ ...meta, blob }); renderFiles(); return; }
+            const b64 = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result.split(',')[1] || ''); fr.readAsDataURL(blob); });
+            const n = Math.max(1, Math.ceil(b64.length / CHUNK));
+            for (let i = 0; i < n; i++) await setDoc(doc(db, 'stores', storeConfig.code, 'files', meta.id, 'chunks', String(i).padStart(4, '0')), { d: b64.slice(i * CHUNK, (i + 1) * CHUNK) });
+            await setDoc(doc(filesCol(), meta.id), { ...meta, chunks: n });
+        }
+        async function getBlob(f) {
+            if (f.blob) return f.blob;
+            const snap = await getDocs(collection(db, 'stores', storeConfig.code, 'files', f.id, 'chunks'));
+            const parts = snap.docs.sort((a, b) => a.id.localeCompare(b.id)).map(d => d.data().d).join('');
+            const bin = atob(parts), arr = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+            return new Blob([arr], { type: f.type });
+        }
+        async function removeFile(f) {
+            if (!db) { files = files.filter(x => x.id !== f.id); renderFiles(); return; }
+            const snap = await getDocs(collection(db, 'stores', storeConfig.code, 'files', f.id, 'chunks'));
+            await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+            await deleteDoc(doc(filesCol(), f.id));
+        }
+        window.deleteFile = id => { const f = files.find(x => x.id === id); if (f) removeFile(f); };
+        window.clearAllFiles = () => { if (files.length && confirm('Hapus semua file?')) [...files].forEach(removeFile); };
+        window.addDemoFiles = async () => {
+            const d = [['Skripsi_Budi.pdf', 'application/pdf'], ['Foto_KTP.jpg', 'image/jpeg'], ['Banner_Promo.cdr', 'application/octet-stream']];
+            for (const [name, type] of d) { const blob = new Blob(['Contoh isi ' + name], { type });
+                await addFile({ id: 'demo' + Date.now() + Math.random().toString(36).slice(2, 6), name, size: blob.size, type, sender: 'Demo', note: 'File contoh', ts: Date.now() }, blob); }
+        };
+
+        // ===== Daftar file kasir =====
+        window.filterFiles = f => {
+            filter = f;
+            document.querySelectorAll('.filter-btn').forEach(b => b.className = 'filter-btn px-3 py-1 rounded-lg text-xs font-semibold ' + (b.dataset.filter === f ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-200'));
+            renderFiles();
+        };
+        function renderFiles() {
+            const box = $('file-list-container');
+            box.querySelectorAll('.file-row').forEach(e => e.remove());
+            const list = files.filter(f => filter === 'all' || kind(f.name) === filter).sort((a, b) => b.ts - a.ts);
+            $('empty-state').classList.toggle('hidden', list.length > 0);
+            list.forEach(f => {
+                const row = document.createElement('div');
+                row.className = 'file-row animate-slide-in flex items-center gap-3 p-3 border border-slate-200 rounded-xl bg-white';
+                row.innerHTML = `<div class="w-10 h-10 bg-blue-50 text-blue-600 rounded-lg flex items-center justify-center shrink-0"><i data-lucide="${icons[kind(f.name)]}" class="w-5 h-5"></i></div>
+                    <div class="flex-1 min-w-0"><p class="text-sm font-bold text-slate-900 truncate">${esc(f.name)}</p>
+                    <p class="text-xs text-slate-500 truncate">${esc(f.sender)} • ${fmtSize(f.size)} • ${new Date(f.ts).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</p></div>
+                    <button onclick="previewFile('${esc(f.id)}')" class="px-3 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 rounded-lg">Lihat</button>
+                    <button onclick="downloadFile('${esc(f.id)}')" class="p-2 text-blue-600 hover:bg-blue-50 rounded-lg" title="Unduh"><i data-lucide="download" class="w-4 h-4"></i></button>
+                    <button onclick="deleteFile('${esc(f.id)}')" class="p-2 text-rose-600 hover:bg-rose-50 rounded-lg" title="Hapus"><i data-lucide="trash-2" class="w-4 h-4"></i></button>`;
+                box.appendChild(row);
+            });
+            $('badge-count').textContent = files.length; $('stat-active-files').textContent = files.length;
+            $('stat-total-size').textContent = fmtSize(files.reduce((s, f) => s + f.size, 0));
+            lucide.createIcons();
+        }
+        window.downloadFile = async id => {
+            const f = files.find(x => x.id === id); if (!f) return;
+            try { const url = URL.createObjectURL(await getBlob(f)); const a = document.createElement('a'); a.href = url; a.download = f.name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 5000); }
+            catch (e) { toast('Gagal mengunduh file'); }
+        };
+        let previewUrl = null;
+        window.closePreviewModal = () => { $('preview-modal').classList.add('hidden'); if (previewUrl) URL.revokeObjectURL(previewUrl); previewUrl = null; };
+        window.previewFile = async id => {
+            const f = files.find(x => x.id === id); if (!f) return;
+            $('preview-filename').textContent = f.name; $('preview-meta').textContent = `Pengirim: ${f.sender} • ${fmtSize(f.size)}`;
+            $('preview-note-text').textContent = f.note || '-'; $('preview-color-type').textContent = '-';
+            $('preview-download-btn').onclick = () => downloadFile(id);
+            const vb = $('preview-visual-box'); vb.innerHTML = '<p class="text-xs text-slate-500">Memuat...</p>';
+            $('preview-modal').classList.remove('hidden');
+            if (kind(f.name) !== 'img') { vb.innerHTML = `<i data-lucide="${icons[kind(f.name)]}" class="w-14 h-14 text-slate-400"></i><p class="text-xs text-slate-500 mt-2">Pratinjau tidak tersedia untuk tipe ini</p>`; lucide.createIcons(); return; }
+            try {
+                previewUrl = URL.createObjectURL(await getBlob(f));
+                const img = new Image(); img.className = 'max-h-[260px] max-w-full object-contain';
+                img.onload = () => {
+                    const c = document.createElement('canvas'); c.width = c.height = 40;
+                    const x = c.getContext('2d'); x.drawImage(img, 0, 0, 40, 40);
+                    const px = x.getImageData(0, 0, 40, 40).data; let col = 0;
+                    for (let i = 0; i < px.length; i += 4) if (Math.max(px[i], px[i+1], px[i+2]) - Math.min(px[i], px[i+1], px[i+2]) > 25) col++;
+                    $('preview-color-type').textContent = col / 1600 > 0.05 ? 'Full Color (CMYK)' : 'Hitam Putih / Grayscale';
+                };
+                img.src = previewUrl; vb.innerHTML = ''; vb.appendChild(img);
+            } catch (e) { vb.innerHTML = '<p class="text-xs text-rose-600">Gagal memuat pratinjau</p>'; }
+        };
+
+        // ===== Sisi pelanggan =====
+        function renderSelected() {
+            $('selected-files-preview').classList.toggle('hidden', !selected.length);
+            $('selected-count').textContent = selected.length;
+            $('selected-files-list').innerHTML = selected.map(f => `<div class="flex justify-between text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2"><span class="truncate pr-2">${esc(f.name)}</span><span class="text-slate-500 shrink-0">${fmtSize(f.size)}</span></div>`).join('');
+        }
+        window.handleFileSelect = e => {
+            for (const f of e.target.files) { if (f.size > MAX_MB * 1048576) toast(`${f.name} melebihi ${MAX_MB} MB`); else selected.push(f); }
+            e.target.value = ''; renderSelected();
+        };
+        window.clearSelectedFiles = () => { selected = []; renderSelected(); };
+        window.sendFilesToStore = async () => {
+            if (!selected.length) return toast('Pilih file dulu');
+            const sender = $('cust-name-input').value.trim() || 'Pelanggan', note = $('cust-note-input').value.trim();
+            const btn = $('btn-send-files'); btn.disabled = true; $('upload-progress-container').classList.remove('hidden');
+            try {
+                for (let i = 0; i < selected.length; i++) {
+                    const f = selected[i];
+                    await addFile({ id: Date.now() + '-' + Math.random().toString(36).slice(2, 7), name: f.name, size: f.size, type: f.type || 'application/octet-stream', sender, note, ts: Date.now() }, f);
+                    const p = Math.round((i + 1) / selected.length * 100);
+                    $('upload-percent').textContent = p + '%'; $('upload-progress-bar').style.width = p + '%';
+                }
+                toast('File terkirim ke toko'); selected = []; renderSelected(); $('cust-note-input').value = '';
+            } catch (e) { toast('Gagal mengirim: ' + e.message); }
+            btn.disabled = false;
+            setTimeout(() => { $('upload-progress-container').classList.add('hidden'); $('upload-progress-bar').style.width = '0%'; }, 800);
+        };
+
+        // ===== Inisialisasi =====
         async function initApp() {
             lucide.createIcons();
-
-            // Deteksi parameter URL standar (?view=pelanggan) agar langsung terbuka di HP
-            const urlParams = new URLSearchParams(window.location.search);
-            if (urlParams.get('view') === 'pelanggan' || window.location.hash.includes('pelanggan')) {
-                switchTab('pelanggan');
-            }
-
+            const p = new URLSearchParams(location.search);
+            if (p.get('view') === 'pelanggan' || location.hash.includes('pelanggan')) switchTab('pelanggan');
             generateStoreQR();
+            $('pin-status-label').textContent = 'Aktif';
 
-            // Timer pembersihan otomatis setiap 15 detik
-// ... existing code ... -->
+            if (cfg) {
+                try {
+                    const app = initializeApp(cfg); await signInAnonymously(getAuth(app)); db = getFirestore(app);
+                    onSnapshot(filesCol(), snap => {
+                        files = snap.docs.map(d => d.data());
+                        if (!isInitialLoad && snap.docChanges().some(c => c.type === 'added')) { toast('File baru masuk!'); try { new Tone.Synth().toDestination().triggerAttackRelease('C6', '16n'); } catch (e) {} }
+                        isInitialLoad = false; renderFiles();
+                    }, err => { setBadge('Error: ' + err.code, false); });
+                    setBadge('Terhubung', true);
+                } catch (e) { db = null; setBadge('Mode Lokal', false); toast('Firebase gagal: ' + e.message); }
+            } else setBadge('Mode Lokal', false);
+
+            // Hapus otomatis file yang melewati batas waktu
+            setInterval(() => { const lim = Date.now() - storeConfig.retentionMinutes * 60000; files.filter(f => f.ts < lim).forEach(removeFile); }, 15000);
+            renderFiles();
+        }
+        initApp();
+    </script>
+</body>
+</html>
