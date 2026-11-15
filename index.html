@@ -476,9 +476,12 @@
         // ==================== GENERATOR QR CODE TOKO ====================
         function getTargetCustomerUrl() {
             const slug = storeConfig.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-            // Gunakan URL publik dari pengaturan jika diisi, jika tidak gunakan URL saat ini
-            let baseUrl = storeConfig.publicUrl ? storeConfig.publicUrl.trim() : `${window.location.origin}${window.location.pathname}`;
-            // Hapus trailing slash jika ada
+            
+            // Jika user mengisi URL publik di pengaturan, gunakan itu.
+            // Jika kosong, otomatis deteksi domain & path saat ini (misal: https://ztronik.github.io/kirimfile/)
+            let baseUrl = storeConfig.publicUrl ? storeConfig.publicUrl.trim() : window.location.href.split('?')[0];
+            
+            // Pastikan tidak ada double slash atau parameter nyasar
             baseUrl = baseUrl.replace(/\/+$/, '');
             const separator = baseUrl.includes('?') ? '&' : '?';
             return `${baseUrl}${separator}toko=${slug}&mode=pelanggan`;
@@ -488,24 +491,9 @@
             const slug = storeConfig.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
             const storeUrl = getTargetCustomerUrl();
             
-            // Cek apakah URL masih bersifat lokal/sandbox preview
-            const isLocalOrSandbox = storeUrl.startsWith('blob:') || 
-                                     storeUrl.startsWith('file:') || 
-                                     storeUrl.includes('localhost') || 
-                                     storeUrl.includes('127.0.0.1') ||
-                                     storeUrl.includes('usercontent.goog') ||
-                                     storeUrl.includes('about:srcdoc');
-
-            const warningBox = document.getElementById('local-url-warning');
-            if (warningBox) {
-                if (isLocalOrSandbox && !storeConfig.publicUrl) {
-                    warningBox.classList.remove('hidden');
-                } else {
-                    warningBox.classList.add('hidden');
-                }
-            }
-
-            document.getElementById('store-url-text').textContent = storeConfig.publicUrl ? storeConfig.publicUrl.replace(/^https?:\/\//, '') : `kirimfile.toko/${slug}`;
+            // Tampilkan URL ringkas di layar
+            const displayUrl = storeUrl.replace(/^https?:\/\//, '');
+            document.getElementById('store-url-text').textContent = displayUrl;
             document.getElementById('header-store-name').textContent = storeConfig.name;
             document.getElementById('cust-store-name').textContent = storeConfig.name;
             document.getElementById('print-store-name').textContent = storeConfig.name;
@@ -1065,13 +1053,14 @@
 
         async function initApp() {
             lucide.createIcons();
-            generateStoreQR();
 
             // Deteksi parameter URL ?mode=pelanggan saat dibuka dari QR HP
             const urlParams = new URLSearchParams(window.location.search);
             if (urlParams.get('mode') === 'pelanggan') {
                 switchTab('pelanggan');
             }
+
+            generateStoreQR();
 
             // Timer pembersihan otomatis setiap 15 detik
             setInterval(async () => {
