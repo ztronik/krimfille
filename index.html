@@ -462,8 +462,8 @@
         try { cfg = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : MY_FIREBASE_CONFIG; } catch (e) { cfg = null; }
 
         let db = null, files = [], selected = [], filter = 'all', isInitialLoad = true;
-        let storeConfig = { name: 'Z-TRONIK PRINT', code: 'ZTR-88', publicUrl: '', retentionMinutes: 30, pin: '123456' };
-        try { Object.assign(storeConfig, JSON.parse(localStorage.getItem('kirimfile-config') || '{}')); } catch (e) {}
+        let storeConfig = { name: 'Z-TRONIK PRINT', code: 'ZTR-88', publicUrl: 'https://ztronik.github.io/kirimfile', retentionMinutes: 30, pin: '123456' };
+        try { const sv = JSON.parse(localStorage.getItem('kirimfile-config') || '{}'); if (!sv.publicUrl) delete sv.publicUrl; Object.assign(storeConfig, sv); } catch (e) {}
 
         const $ = id => document.getElementById(id);
         const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
